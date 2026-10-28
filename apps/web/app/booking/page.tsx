@@ -143,6 +143,7 @@ function BookingContent() {
     try {
       const idempotencyKey = generateIdempotencyKey('RESERVE');
       const booking = await api.booking.reserve({
+        resourceCode: activeResource?.code,
         resourceId: selectedResourceId,
         date: selectedDate,
         slotIndices: selectedSlots,
@@ -467,7 +468,7 @@ function BookingContent() {
               <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row items-center gap-4">
                 <div className="w-36 h-36 bg-white rounded-xl border border-emerald-300 p-1.5 shrink-0 flex items-center justify-center shadow-md">
                   <img
-                    src={`https://img.vietqr.io/image/970422-VQRQANCXY2688-compact2.png?amount=${reservedBooking.estimatedPrice || 0}&addInfo=DATSAN%20${reservedBooking.bookingCode || 'SAN'}&accountName=CAO%20NGUYEN%20ANH`}
+                    src={`https://img.vietqr.io/image/970422-VQRQANCXY2688-compact2.png?amount=${reservedBooking?.totalPrice || reservedBooking?.estimatedPrice || estimatedPrice || 0}&addInfo=DATSAN%20${reservedBooking?.bookingCode || 'SAN'}&accountName=CAO%20NGUYEN%20ANH`}
                     alt="VietQR PayOS"
                     className="w-full h-full object-contain"
                   />
@@ -480,9 +481,9 @@ function BookingContent() {
                   <div className="text-slate-600">Ngân hàng: <strong className="text-slate-900">MBBank (Quân Đội)</strong></div>
                   <div className="text-slate-600">Số tài khoản: <strong className="text-emerald-700 font-mono text-sm">VQRQANCXY2688</strong></div>
                   <div className="text-slate-600">Chủ tài khoản: <strong className="text-slate-900">CAO NGUYEN ANH</strong></div>
-                  <div className="text-slate-600">Số tiền: <strong className="text-emerald-600 font-bold">{formatVND(reservedBooking.estimatedPrice || 0)}</strong></div>
+                  <div className="text-slate-600">Số tiền: <strong className="text-emerald-600 font-bold">{formatVND(reservedBooking?.totalPrice || reservedBooking?.estimatedPrice || estimatedPrice || 0)}</strong></div>
                   <div className="text-[11px] bg-white/80 p-1.5 rounded-lg border border-emerald-100 text-emerald-800 font-bold">
-                    Cú pháp: DATSAN {reservedBooking.bookingCode || 'SAN'}
+                    Cú pháp: DATSAN {reservedBooking?.bookingCode || 'SAN'}
                   </div>
                 </div>
               </div>

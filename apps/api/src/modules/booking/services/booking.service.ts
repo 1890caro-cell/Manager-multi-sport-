@@ -50,7 +50,15 @@ export class BookingService {
    * Bước 1: Giữ chỗ tạm thời (HOLD) với 3 lớp phòng thủ chống trùng lịch (Double-booking Prevention)
    */
   async holdBooking(dto: HoldBookingDto, userId: string): Promise<BookingDocument> {
-    const resource = await this.resourceService.findByCode(dto.resourceCode);
+    let targetCode = dto.resourceCode;
+    if (!targetCode && (dto as any).resourceId) {
+      const res = await this.resourceService.findById((dto as any).resourceId);
+      targetCode = res.code;
+    }
+    if (!targetCode) {
+      throw new BadRequestException('Mã tài nguyên (resourceCode hoặc resourceId) là bắt buộc');
+    }
+    const resource = await this.resourceService.findByCode(targetCode);
     parseVietnamDate(dto.date);
     const todayStr = toVietnamDateString(nowInVietnam());
 

@@ -49,10 +49,15 @@ export type MatchmakingDetail = z.infer<typeof matchmakingDetailSchema>;
 
 // --- Hold Booking (Giữ chỗ tạm thời) ---
 export const holdBookingSchema = z.object({
-  resourceCode: z.string().trim().min(1),
+  resourceCode: z.string().trim().min(1).optional(),
+  resourceId: z.string().trim().optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Định dạng YYYY-MM-DD'),
   slotIndices: z.array(z.number().int().min(0).max(47)).min(1),
   matchmaking: matchmakingDetailSchema.optional(),
+  idempotencyKey: z.string().optional(),
+}).refine((data) => Boolean(data.resourceCode || data.resourceId), {
+  message: 'Mã tài nguyên (resourceCode hoặc resourceId) là bắt buộc',
+  path: ['resourceCode'],
 });
 
 export type HoldBookingDto = z.input<typeof holdBookingSchema>;
@@ -62,6 +67,7 @@ export type HoldBookingRequest = HoldBookingDto;
 export const confirmBookingSchema = z.object({
   paidAmount: z.number().int().positive().optional(),
   paymentMethod: z.string().optional().default('INTERNAL_WALLET'),
+  idempotencyKey: z.string().optional(),
 });
 
 export type ConfirmBookingDto = z.input<typeof confirmBookingSchema>;

@@ -3,7 +3,7 @@ import { Public } from '../../auth/index.js';
 import { ResourceService } from '../services/resource.service.js';
 import { OperatingHoursService } from '../services/operating-hours.service.js';
 import { PricingService } from '../services/pricing.service.js';
-import { CalculatePriceDto, calculatePriceSchema } from '@sports/contracts';
+import { calculatePriceSchema } from '@sports/contracts';
 
 @Controller(['facility', 'facilities'])
 export class FacilitiesController {
@@ -48,8 +48,18 @@ export class FacilitiesController {
   @Public()
   @Post('pricing/calculate')
   @HttpCode(HttpStatus.OK)
-  async calculatePrice(@Body() body: CalculatePriceDto) {
-    const validated = calculatePriceSchema.parse(body);
+  async calculatePrice(@Body() body: any) {
+    let resourceCode = body.resourceCode;
+    if (!resourceCode && body.resourceId) {
+      try {
+        const res = await this.resourceService.findById(body.resourceId);
+        resourceCode = res.code;
+      } catch {}
+    }
+    const validated = calculatePriceSchema.parse({
+      ...body,
+      resourceCode,
+    });
     const result = await this.pricingService.calculatePrice(validated);
     return { data: result };
   }
@@ -57,13 +67,26 @@ export class FacilitiesController {
 
 @Controller('pricing')
 export class PricingController {
-  constructor(private readonly pricingService: PricingService) {}
+  constructor(
+    private readonly pricingService: PricingService,
+    private readonly resourceService: ResourceService,
+  ) {}
 
   @Public()
   @Post('calculate')
   @HttpCode(HttpStatus.OK)
-  async calculatePrice(@Body() body: CalculatePriceDto) {
-    const validated = calculatePriceSchema.parse(body);
+  async calculatePrice(@Body() body: any) {
+    let resourceCode = body.resourceCode;
+    if (!resourceCode && body.resourceId) {
+      try {
+        const res = await this.resourceService.findById(body.resourceId);
+        resourceCode = res.code;
+      } catch {}
+    }
+    const validated = calculatePriceSchema.parse({
+      ...body,
+      resourceCode,
+    });
     const result = await this.pricingService.calculatePrice(validated);
     return { data: result };
   }
