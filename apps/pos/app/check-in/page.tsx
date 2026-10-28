@@ -22,7 +22,9 @@ import {
   ChevronRight,
   ShieldCheck,
   Loader2,
+  Camera,
 } from 'lucide-react';
+import { CameraQrScanner } from '@/components/CameraQrScanner';
 
 interface BookingItem {
   id: string;
@@ -60,6 +62,7 @@ export default function CheckInPage() {
   const [selectedBooking, setSelectedBooking] = useState<BookingItem | null>(null);
   const [todayBookings, setTodayBookings] = useState<BookingItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'CHECKED_IN' | 'COMPLETED'>('ALL');
+  const [isCameraActive, setIsCameraActive] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -267,6 +270,23 @@ export default function CheckInPage() {
                 <span>Tra cứu</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBooking(null);
+                  setIsCameraActive((prev) => !prev);
+                }}
+                className={`px-4 py-3 border rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm ${
+                  isCameraActive
+                    ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 hover:bg-rose-500/20'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-transparent'
+                }`}
+                title="Bật/Tắt Camera quét mã trực tiếp"
+              >
+                <Camera className="w-4 h-4" />
+                <span>{isCameraActive ? 'Tắt Cam' : 'Bật Camera'}</span>
+              </button>
+
               {searchInput && (
                 <button
                   type="button"
@@ -317,13 +337,29 @@ export default function CheckInPage() {
                     </span>
                   </div>
 
-                  <button
-                    onClick={handlePrintSlip}
-                    className="flex items-center gap-1.5 px-3.5 py-2 border border-border rounded-xl text-xs font-bold text-foreground hover:bg-muted transition-colors"
-                  >
-                    <Printer className="w-4 h-4 text-muted-foreground" />
-                    <span>In phiếu</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedBooking(null);
+                        setSearchInput('');
+                        setIsCameraActive(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-primary/10 border border-primary/20 text-primary rounded-xl text-xs font-bold hover:bg-primary/20 transition-colors"
+                      title="Mở camera quét vé tiếp theo"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Quét vé tiếp</span>
+                    </button>
+
+                    <button
+                      onClick={handlePrintSlip}
+                      className="flex items-center gap-1.5 px-3.5 py-2 border border-border rounded-xl text-xs font-bold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Printer className="w-4 h-4 text-muted-foreground" />
+                      <span>In phiếu</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Match & Facility Details */}
@@ -456,14 +492,16 @@ export default function CheckInPage() {
               </div>
             </div>
           ) : (
-            <div className="bg-card border border-border rounded-2xl p-12 text-center flex-1 flex flex-col items-center justify-center text-muted-foreground">
-              <div className="w-16 h-16 rounded-2xl bg-muted/60 flex items-center justify-center mb-4">
-                <QrCode className="w-8 h-8 text-muted-foreground/60" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Sẵn sàng quét mã QR</h3>
-              <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                Hướng máy quét vào mã QR trên điện thoại khách hàng hoặc nhập mã đặt sân / số điện thoại vào ô bên trên.
-              </p>
+            <div className="bg-card border border-border rounded-2xl p-6 shadow-sm flex-1 flex flex-col items-center justify-center">
+              <CameraQrScanner
+                isActive={isCameraActive}
+                onToggleActive={() => setIsCameraActive((prev) => !prev)}
+                onScanSuccess={(decodedText) => {
+                  setSearchInput(decodedText);
+                  handleSearch(decodedText);
+                  setIsCameraActive(false);
+                }}
+              />
             </div>
           )}
         </div>
