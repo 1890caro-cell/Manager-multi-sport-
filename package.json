@@ -1,0 +1,25 @@
+{
+  "name": "sports-complex-management",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:race": "turbo run test:race",
+    "test:e2e": "turbo run test:e2e",
+    "contracts:gen": "turbo run contracts:gen",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.5.0",
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3"
+  }
+}

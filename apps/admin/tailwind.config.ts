@@ -1,0 +1,24 @@
+import type { Config } from 'tailwindcss';
+
+const config: Config = {
+  content: [
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      colors: {
+        admin: {
+          sidebar: '#0f172a',
+          sidebarHover: '#1e293b',
+          accent: '#10b981',
+          accentDark: '#059669',
+        },
+      },
+    },
+  },
+  plugins: [],
+};
+
+export default config;
