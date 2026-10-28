@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Booking, BookingSchema } from './schemas/booking.schema.js';
 import { BookingSlot, BookingSlotSchema } from './schemas/booking-slot.schema.js';
 
+import { User, UserSchema } from '../auth/schemas/user.schema.js';
 import { RedisLockService } from './services/redis-lock.service.js';
 import { AvailabilityService } from './services/availability.service.js';
 import { BookingService } from './services/booking.service.js';
@@ -17,6 +18,7 @@ import { AdminBookingsController } from './controllers/admin-bookings.controller
     MongooseModule.forFeature([
       { name: Booking.name, schema: BookingSchema },
       { name: BookingSlot.name, schema: BookingSlotSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   controllers: [BookingsController, AdminBookingsController],

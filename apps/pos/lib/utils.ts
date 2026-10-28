@@ -49,6 +49,21 @@ export function formatTimeOnly(dateStr: string | Date): string {
   return `${hours}:${minutes}:${seconds}`;
 }
 
+export function formatSlotTimeRange(slots: number[]): string {
+  if (!slots || slots.length === 0) return 'Chưa chọn giờ';
+  const sorted = [...slots].sort((a, b) => a - b);
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+
+  const startH = Math.floor(min / 2).toString().padStart(2, '0');
+  const startM = (min % 2 === 1 ? '30' : '00');
+
+  const endH = Math.floor((max + 1) / 2).toString().padStart(2, '0');
+  const endM = ((max + 1) % 2 === 1 ? '30' : '00');
+
+  return `${startH}:${startM} - ${endH}:${endM} (${slots.length * 30} phút)`;
+}
+
 export function generateIdempotencyKey(): string {
   const timestamp = Date.now().toString(36);
   const randomStr = Math.random().toString(36).substring(2, 10);

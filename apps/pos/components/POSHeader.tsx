@@ -10,6 +10,7 @@ import {
   Receipt,
   ShoppingBag,
   Cpu,
+  QrCode,
   Lock,
   Unlock,
   KeyRound,
@@ -36,6 +37,7 @@ export const POSHeader: React.FC<POSHeaderProps> = ({
 
   const navLinks = [
     { href: '/', label: 'Bán hàng', icon: ShoppingCart },
+    { href: '/check-in', label: 'Check-in sân', icon: QrCode },
     { href: '/shifts', label: 'Ca thu ngân', icon: Clock },
     { href: '/orders', label: 'Hóa đơn & Hủy', icon: Receipt },
     { href: '/rentals', label: 'Thuê dụng cụ', icon: ShoppingBag },

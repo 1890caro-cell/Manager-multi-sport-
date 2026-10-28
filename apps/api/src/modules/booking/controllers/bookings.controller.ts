@@ -16,11 +16,13 @@ import {
   holdBookingSchema,
   confirmBookingSchema,
   cancelBookingSchema,
+  rescheduleBookingSchema,
   recurringBookingSchema,
   AvailabilityQueryDto,
   HoldBookingDto,
   ConfirmBookingDto,
   CancelBookingDto,
+  RescheduleBookingDto,
   RecurringBookingDto,
 } from '@sports/contracts';
 
@@ -78,6 +80,18 @@ export class BookingsController {
   ) {
     const validated = cancelBookingSchema.parse(body);
     const result = await this.bookingService.cancelBooking(id, validated, actorId);
+    return { data: result };
+  }
+
+  @Post(':id/reschedule')
+  @HttpCode(HttpStatus.OK)
+  async rescheduleBooking(
+    @Param('id') id: string,
+    @Body() body: RescheduleBookingDto,
+    @CurrentUser('sub') actorId: string,
+  ) {
+    const validated = rescheduleBookingSchema.parse(body);
+    const result = await this.bookingService.rescheduleBooking(id, validated, actorId);
     return { data: result };
   }
 

@@ -52,6 +52,54 @@ export default function MyBookingsPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
 
+  // Reschedule modal states
+  const [rescheduleModalItem, setRescheduleModalItem] = useState<BookingItem | null>(null);
+  const [newDate, setNewDate] = useState('');
+  const [newStartHour, setNewStartHour] = useState('18:00');
+  const [rescheduling, setRescheduling] = useState(false);
+  const [rescheduleSuccess, setRescheduleSuccess] = useState<string | null>(null);
+
+  const calculateCancelRefund = (booking: BookingItem) => {
+    if (!booking.date || !booking.slotIndices?.length) {
+      return { eligible: false, refundAmount: 0, hoursRemaining: 0 };
+    }
+    const minSlot = Math.min(...booking.slotIndices);
+    const startHour = Math.floor(minSlot / 2);
+    const startMinute = (minSlot % 2) * 30;
+    const [y, m, d] = booking.date.split('-').map(Number);
+    const startUtc = new Date(Date.UTC(y, m - 1, d, startHour - 7, startMinute));
+    const now = new Date();
+    const hoursRemaining = Math.max(0, (startUtc.getTime() - now.getTime()) / (3600 * 1000));
+    const eligible = hoursRemaining >= 24;
+    const refundAmount = eligible ? (booking.totalAmount || 0) : 0;
+    return { eligible, refundAmount, hoursRemaining };
+  };
+
+  const handleRescheduleBooking = async () => {
+    if (!rescheduleModalItem || !newDate) return;
+    try {
+      setRescheduling(true);
+      const [h, m] = newStartHour.split(':').map(Number);
+      const startSlot = h * 2 + (m === 30 ? 1 : 0);
+      const slotCount = rescheduleModalItem.slotIndices?.length || 2;
+      const newSlotIndices = Array.from({ length: slotCount }, (_, i) => startSlot + i);
+
+      await api.booking.reschedule(rescheduleModalItem.id, {
+        newDate,
+        newSlotIndices,
+      });
+
+      setRescheduleSuccess(`Đã đổi lịch đặt sân ${rescheduleModalItem.bookingCode} thành công sang ngày ${newDate} (${newStartHour}).`);
+      setRescheduleModalItem(null);
+      fetchBookings();
+      setTimeout(() => setRescheduleSuccess(null), 5000);
+    } catch (err: any) {
+      alert(err.message || 'Lỗi khi đổi lịch đặt sân');
+    } finally {
+      setRescheduling(false);
+    }
+  };
+
   const fetchBookings = async () => {
     try {
       setLoading(true);
@@ -294,13 +342,27 @@ export default function MyBookingsPage() {
                 {/* Actions */}
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                   {booking.status === 'CONFIRMED' || booking.status === 'CHECKED_IN' ? (
-                    <button
-                      onClick={() => setActiveTicket(booking)}
-                      className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-200 transition-colors"
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      Mã QR Check-in
-                    </button>
+                    <div className="flex-1 flex items-center gap-2">
+                      <button
+                        onClick={() => setActiveTicket(booking)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-200 transition-colors"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        Mã QR Check-in
+                      </button>
+
+                      {booking.status === 'CONFIRMED' && (
+                        <button
+                          onClick={() => {
+                            setRescheduleModalItem(booking);
+                            setNewDate(booking.date);
+                          }}
+                          className="px-3 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
+                        >
+                          Đổi lịch
+                        </button>
+                      )}
+                    </div>
                   ) : booking.status === 'HELD' ? (
                     <div className="w-full flex gap-2">
                       <Link
@@ -323,13 +385,21 @@ export default function MyBookingsPage() {
                       onClick={() => setCancelModalItem(booking)}
                       className="text-xs font-semibold text-slate-400 hover:text-rose-600 px-2 py-1 rounded transition-colors whitespace-nowrap"
                     >
-                      Hủy đặt sân
+                      Hủy sân
                     </button>
                   )}
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Success Notification */}
+      {rescheduleSuccess && (
+        <div className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white px-5 py-3 rounded-2xl shadow-xl text-xs font-bold flex items-center gap-2 animate-bounce">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{rescheduleSuccess}</span>
         </div>
       )}
 
@@ -358,17 +428,14 @@ export default function MyBookingsPage() {
 
             <div className="my-5">
               <QrCodeDisplay
-                value={
-                  activeTicket.checkInCode ||
-                  `SPORTS:CHECKIN:${activeTicket.bookingCode || activeTicket.id}`
-                }
-                label="Quét tại cổng / thiết bị nhân viên"
+                value={activeTicket.bookingCode || activeTicket.id}
+                label="Quét tại cổng / quầy thu ngân POS"
                 sublabel={`Mã: ${activeTicket.bookingCode || activeTicket.id.slice(-6).toUpperCase()}`}
               />
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl text-left text-xs text-slate-600 space-y-1">
-              <p>• Xuất trình mã này trước giờ thi đấu 10 phút tại quầy hoặc cửa kiểm soát.</p>
+              <p>• Xuất trình mã này trước giờ thi đấu 10 phút tại quầy hoặc máy quét POS.</p>
               <p>• Mã hợp lệ cho tất cả thành viên trong nhóm tham gia trận đấu.</p>
             </div>
 
@@ -382,60 +449,164 @@ export default function MyBookingsPage() {
         </div>
       )}
 
-      {/* Cancel Modal */}
-      {cancelModalItem && (
+      {/* Cancel Modal with Dynamic 24h Cutoff Policy */}
+      {cancelModalItem && (() => {
+        const refundInfo = calculateCancelRefund(cancelModalItem);
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+              <div className="flex items-center gap-3 text-rose-600 mb-3">
+                <ShieldAlert className="w-6 h-6" />
+                <h3 className="text-base font-bold text-slate-900">Xác nhận hủy đặt sân</h3>
+              </div>
+
+              <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                Bạn có chắc chắn muốn hủy đặt sân{' '}
+                <strong className="text-slate-900">
+                  {cancelModalItem.bookingCode || cancelModalItem.id.slice(-6).toUpperCase()}
+                </strong>
+                ?
+              </p>
+
+              {/* Dynamic 24h Refund Policy Notice */}
+              <div className={`p-3.5 border rounded-xl text-xs mb-4 space-y-1.5 ${
+                refundInfo.eligible
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                <div className="flex items-center justify-between font-bold">
+                  <span>Chính sách hoàn tiền (Mốc 24h):</span>
+                  <span className={`px-2 py-0.5 rounded text-[11px] font-black ${
+                    refundInfo.eligible ? 'bg-emerald-200/80 text-emerald-900' : 'bg-amber-200/80 text-amber-900'
+                  }`}>
+                    {refundInfo.eligible ? 'HOÀN 100% CỌC' : 'HOÀN 0 ĐỒNG'}
+                  </span>
+                </div>
+                <p className="leading-relaxed">
+                  {refundInfo.eligible
+                    ? `Bạn đang hủy trước giờ bắt đầu ${refundInfo.hoursRemaining.toFixed(1)} giờ (trước mốc 24h). Số tiền ${formatVND(refundInfo.refundAmount)} sẽ được hoàn tự động vào ví nội bộ.`
+                    : `Thời gian tới giờ chơi còn ${refundInfo.hoursRemaining.toFixed(1)} giờ (dưới 24h). Theo quy chế tổ hợp thể thao, lượt đặt này không áp dụng hoàn tiền.`}
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Lý do hủy sân (không bắt buộc)
+                </label>
+                <textarea
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Nhập lý do để ban quản lý hỗ trợ cải thiện dịch vụ..."
+                  className="w-full text-xs p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCancelModalItem(null)}
+                  disabled={cancelling}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Giữ lại sân
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelBooking}
+                  disabled={cancelling}
+                  className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm flex items-center gap-1.5"
+                >
+                  {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Xác nhận hủy sân
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Reschedule Modal */}
+      {rescheduleModalItem && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
-            <div className="flex items-center gap-3 text-rose-600 mb-3">
-              <ShieldAlert className="w-6 h-6" />
-              <h3 className="text-base font-bold text-slate-900">Xác nhận hủy đặt sân</h3>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-base font-bold text-slate-900">Đổi lịch đặt sân</h3>
+              <button
+                onClick={() => setRescheduleModalItem(null)}
+                className="text-slate-400 hover:text-slate-600 text-sm"
+              >
+                ✕
+              </button>
             </div>
 
-            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-              Bạn có chắc chắn muốn hủy đặt sân{' '}
-              <strong className="text-slate-900">
-                {cancelModalItem.bookingCode || cancelModalItem.id.slice(-6).toUpperCase()}
-              </strong>
-              ?
+            <p className="text-xs text-slate-600 mb-4">
+              Đổi ca chơi cho vé <strong className="text-slate-900">{rescheduleModalItem.bookingCode}</strong> ({rescheduleModalItem.resourceName || `Sân ${rescheduleModalItem.sportType}`}).
             </p>
 
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 mb-4 space-y-1">
-              <p className="font-bold">Chính sách hoàn tiền:</p>
-              <p>• Hủy trước 24 giờ: Hoàn 100% về ví nội bộ.</p>
-              <p>• Hủy trước 12 giờ: Hoàn 50% tổng số tiền.</p>
-              <p>• Hủy dưới 12 giờ: Không áp dụng hoàn tiền.</p>
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 mb-4 space-y-1">
+              <p className="font-bold">Quy định đổi lịch (A03):</p>
+              <p>• Đổi trước giờ bắt đầu ít nhất 2 giờ, tối đa 2 lần/vé.</p>
+              <p>• Chênh lệch giá nếu khung mới đắt hơn sẽ thu thêm, rẻ hơn hoàn vào ví.</p>
             </div>
 
-            <div className="mb-4">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Lý do hủy sân (không bắt buộc)
-              </label>
-              <textarea
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Nhập lý do để ban quản lý hỗ trợ cải thiện dịch vụ..."
-                className="w-full text-xs p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
-                rows={3}
-              />
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Chọn ngày mới
+                </label>
+                <input
+                  type="date"
+                  value={newDate}
+                  min={new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setNewDate(e.target.value)}
+                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Chọn khung giờ bắt đầu
+                </label>
+                <select
+                  value={newStartHour}
+                  onChange={(e) => setNewStartHour(e.target.value)}
+                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:outline-none"
+                >
+                  <option value="06:00">06:00 Sáng</option>
+                  <option value="07:00">07:00 Sáng</option>
+                  <option value="08:00">08:00 Sáng</option>
+                  <option value="15:00">15:00 Chiều</option>
+                  <option value="16:00">16:00 Chiều</option>
+                  <option value="17:00">17:00 Chiều</option>
+                  <option value="18:00">18:00 Tối</option>
+                  <option value="19:00">19:00 Tối</option>
+                  <option value="20:00">20:00 Tối</option>
+                  <option value="21:00">21:00 Tối</option>
+                </select>
+                <span className="text-[11px] text-slate-400 mt-1 block">
+                  Thời lượng giữ nguyên: {rescheduleModalItem.slotIndices.length * 30} phút
+                </span>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCancelModalItem(null)}
-                disabled={cancelling}
+                onClick={() => setRescheduleModalItem(null)}
+                disabled={rescheduling}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
               >
-                Giữ lại sân
+                Hủy bỏ
               </button>
               <button
                 type="button"
-                onClick={handleCancelBooking}
-                disabled={cancelling}
-                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm flex items-center gap-1.5"
+                onClick={handleRescheduleBooking}
+                disabled={rescheduling}
+                className="px-4 py-2 text-xs font-bold text-white bg-primary hover:bg-primary/90 rounded-lg shadow-sm flex items-center gap-1.5"
               >
-                {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                Xác nhận hủy sân
+                {rescheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Xác nhận đổi lịch
               </button>
             </div>
           </div>

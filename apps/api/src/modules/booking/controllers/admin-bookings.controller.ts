@@ -25,6 +25,7 @@ export class AdminBookingsController {
     @Query('date') date?: string,
     @Query('resourceCode') resourceCode?: string,
     @Query('status') status?: string,
+    @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -32,9 +33,16 @@ export class AdminBookingsController {
       date,
       resourceCode,
       status,
+      search,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
+    return { data: result };
+  }
+
+  @Get(':idOrCode')
+  async getBooking(@Param('idOrCode') idOrCode: string) {
+    const result = await this.bookingService.findByIdOrCode(idOrCode);
     return { data: result };
   }
 

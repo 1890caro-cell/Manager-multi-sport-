@@ -182,6 +182,13 @@ export const api = {
       });
       return res?.data ?? res;
     },
+    reschedule: async (bookingId: string, data: { newDate: string; newSlotIndices: number[]; newResourceCode?: string }) => {
+      const res = await request<any>(`/api/v1/bookings/${bookingId}/reschedule`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      return res?.data ?? res;
+    },
   },
 
   // Gym

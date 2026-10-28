@@ -133,3 +133,15 @@ export const recurringBookingResponseSchema = z.object({
 });
 
 export type RecurringBookingResponse = z.infer<typeof recurringBookingResponseSchema>;
+
+// --- Reschedule Booking (Đổi lịch sân) ---
+export const rescheduleBookingSchema = z.object({
+  newDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Định dạng YYYY-MM-DD'),
+  newSlotIndices: z.array(z.number().int().min(0).max(47)).min(1),
+  newResourceCode: z.string().trim().min(1).optional(),
+});
+
+export type RescheduleBookingDto = z.infer<typeof rescheduleBookingSchema>;
+export type RescheduleBookingRequest = RescheduleBookingDto;
+
+

@@ -205,4 +205,34 @@ export const api = {
       return res.data;
     },
   },
+
+  // Court Bookings & Check-in (M04 / F04.7)
+  bookings: {
+    getAll: async (filter?: { date?: string; resourceCode?: string; status?: string; search?: string }) => {
+      const params = new URLSearchParams();
+      if (filter?.date) params.set('date', filter.date);
+      if (filter?.resourceCode) params.set('resourceCode', filter.resourceCode);
+      if (filter?.status) params.set('status', filter.status);
+      if (filter?.search) params.set('search', filter.search);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await request<{ data: { items: any[]; total: number } }>(`/api/v1/admin/bookings${qs}`);
+      return res.data?.items || [];
+    },
+    getByIdOrCode: async (idOrCode: string) => {
+      const res = await request<{ data: any }>(`/api/v1/admin/bookings/${idOrCode}`);
+      return res.data;
+    },
+    checkIn: async (idOrCode: string) => {
+      const res = await request<{ data: any }>(`/api/v1/admin/bookings/${idOrCode}/check-in`, {
+        method: 'POST',
+      });
+      return res.data;
+    },
+    complete: async (idOrCode: string) => {
+      const res = await request<{ data: any }>(`/api/v1/admin/bookings/${idOrCode}/complete`, {
+        method: 'POST',
+      });
+      return res.data;
+    },
+  },
 };

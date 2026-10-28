@@ -96,6 +96,9 @@ export class Booking {
   @Prop({ type: Number })
   refundAmount?: number;
 
+  @Prop({ type: Number, default: 0 })
+  rescheduledCount: number;
+
   @Prop({ required: true, default: 0 })
   version: number;
 

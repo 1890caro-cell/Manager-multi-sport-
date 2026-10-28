@@ -16,10 +16,12 @@ import { SettingsService } from '../../facility/services/settings.service.js';
 import { DatabaseTransactionService } from '../../../database/database-transaction.service.js';
 import { OutboxService } from '../../outbox/services/outbox.service.js';
 import { AuditLogService } from '../../auth/services/audit-log.service.js';
+import { User, UserDocument } from '../../auth/schemas/user.schema.js';
 import {
   HoldBookingDto,
   ConfirmBookingDto,
   CancelBookingDto,
+  RescheduleBookingDto,
   RecurringBookingDto,
   RecurringBookingResponse,
   BookingStatus,
@@ -37,6 +39,7 @@ export class BookingService {
   constructor(
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
     @InjectModel(BookingSlot.name) private readonly bookingSlotModel: Model<BookingSlotDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly redisLockService: RedisLockService,
     private readonly resourceService: ResourceService,
     private readonly pricingService: PricingService,
@@ -283,8 +286,8 @@ export class BookingService {
   /**
    * Bước 3: Hủy đặt sân (CANCELLED) & tính toán hoàn tiền dựa theo policySnapshot (mốc 24h)
    */
-  async cancelBooking(bookingId: string, dto: CancelBookingDto, actorId: string): Promise<BookingDocument> {
-    const booking = await this.findById(bookingId);
+  async cancelBooking(bookingIdOrCode: string, dto: CancelBookingDto, actorId: string): Promise<BookingDocument> {
+    const booking = await this.findByIdOrCode(bookingIdOrCode);
 
     if (
       booking.status !== BookingStatus.HOLD &&
@@ -374,8 +377,8 @@ export class BookingService {
   /**
    * Check-in nhận sân tại quầy (Nhân viên / Lễ tân)
    */
-  async checkIn(bookingId: string, actorId: string): Promise<BookingDocument> {
-    const booking = await this.findById(bookingId);
+  async checkIn(bookingIdOrCode: string, actorId: string): Promise<BookingDocument> {
+    const booking = await this.findByIdOrCode(bookingIdOrCode);
 
     if (booking.status !== BookingStatus.CONFIRMED) {
       throw new BadRequestException(`Chỉ có thể check-in khi đặt sân ở trạng thái CONFIRMED (hiện tại: ${booking.status})`);
@@ -384,7 +387,24 @@ export class BookingService {
     booking.status = BookingStatus.CHECKED_IN;
     booking.checkInAt = new Date();
     booking.version += 1;
+
+    await this.bookingSlotModel.updateMany(
+      { bookingId: booking._id },
+      { $set: { status: 'CHECKED_IN' } },
+    );
+
     const updated = await booking.save();
+
+    await this.outboxService.recordEvent({
+      eventType: 'booking.checked_in',
+      aggregateType: 'booking',
+      aggregateId: booking.id,
+      payload: {
+        bookingCode: booking.bookingCode,
+        checkInAt: booking.checkInAt.toISOString(),
+        actorId,
+      },
+    });
 
     await this.auditLogService.record({
       actorId,
@@ -400,8 +420,8 @@ export class BookingService {
   /**
    * Hoàn thành lượt chơi (CHECKED_IN -> COMPLETED)
    */
-  async complete(bookingId: string, actorId: string): Promise<BookingDocument> {
-    const booking = await this.findById(bookingId);
+  async complete(bookingIdOrCode: string, actorId: string): Promise<BookingDocument> {
+    const booking = await this.findByIdOrCode(bookingIdOrCode);
 
     if (booking.status !== BookingStatus.CHECKED_IN) {
       throw new BadRequestException(`Chỉ có thể hoàn thành khi đặt sân ở trạng thái CHECKED_IN (hiện tại: ${booking.status})`);
@@ -411,6 +431,17 @@ export class BookingService {
     booking.checkOutAt = new Date();
     booking.version += 1;
     const updated = await booking.save();
+
+    await this.outboxService.recordEvent({
+      eventType: 'booking.completed',
+      aggregateType: 'booking',
+      aggregateId: booking.id,
+      payload: {
+        bookingCode: booking.bookingCode,
+        checkOutAt: booking.checkOutAt.toISOString(),
+        actorId,
+      },
+    });
 
     await this.auditLogService.record({
       actorId,
@@ -493,7 +524,7 @@ export class BookingService {
   }
 
   async findById(id: string): Promise<BookingDocument> {
-    const booking = await this.bookingModel.findById(id).exec();
+    const booking = await this.bookingModel.findById(id).populate('userId', 'fullName phone email avatar').exec();
     if (!booking) {
       throw new NotFoundException(`Booking with ID ${id} not found`);
     }
@@ -501,11 +532,204 @@ export class BookingService {
   }
 
   async findByCode(code: string): Promise<BookingDocument> {
-    const booking = await this.bookingModel.findOne({ bookingCode: code.toUpperCase() }).exec();
+    const booking = await this.bookingModel.findOne({ bookingCode: code.toUpperCase() }).populate('userId', 'fullName phone email avatar').exec();
     if (!booking) {
       throw new NotFoundException(`Booking with code ${code} not found`);
     }
     return booking;
+  }
+
+  /**
+   * Tìm kiếm booking linh hoạt theo ID (ObjectId) hoặc Booking Code (BK-...)
+   * Hỗ trợ giải mã chuỗi quét từ QR (SPORTS:CHECKIN:BK-...)
+   */
+  async findByIdOrCode(idOrCode: string): Promise<BookingDocument> {
+    const clean = idOrCode.trim().replace(/^SPORTS:CHECKIN:/i, '');
+    let booking: BookingDocument | null = null;
+
+    if (clean.toUpperCase().startsWith('BK-')) {
+      booking = await this.bookingModel
+        .findOne({ bookingCode: clean.toUpperCase() })
+        .populate('userId', 'fullName phone email avatar')
+        .exec();
+    } else if (Types.ObjectId.isValid(clean)) {
+      booking = await this.bookingModel
+        .findById(clean)
+        .populate('userId', 'fullName phone email avatar')
+        .exec();
+      if (!booking) {
+        booking = await this.bookingModel
+          .findOne({ bookingCode: clean.toUpperCase() })
+          .populate('userId', 'fullName phone email avatar')
+          .exec();
+      }
+    } else {
+      booking = await this.bookingModel
+        .findOne({ bookingCode: clean.toUpperCase() })
+        .populate('userId', 'fullName phone email avatar')
+        .exec();
+    }
+
+    if (!booking) {
+      throw new NotFoundException(`Không tìm thấy lượt đặt sân với mã hoặc ID: ${idOrCode}`);
+    }
+    return booking;
+  }
+
+  /**
+   * Đổi lịch sân (Reschedule Booking - F04.6 / A03)
+   * Điều kiện: Trước giờ bắt đầu ít nhất 2 giờ, tối đa 2 lần/lượt đặt
+   */
+  async rescheduleBooking(
+    idOrCode: string,
+    dto: RescheduleBookingDto,
+    actorId: string,
+  ): Promise<BookingDocument> {
+    const booking = await this.findByIdOrCode(idOrCode);
+
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new BadRequestException(
+        `Chỉ có thể đổi lịch khi đặt sân ở trạng thái CONFIRMED (hiện tại: ${booking.status})`,
+      );
+    }
+
+    if ((booking.rescheduledCount || 0) >= 2) {
+      throw new BadRequestException('Mỗi lượt đặt sân chỉ được phép đổi lịch tối đa 2 lần');
+    }
+
+    // Kiểm tra mốc 2 giờ trước giờ bắt đầu
+    const minSlot = Math.min(...booking.slotIndices);
+    const { startUtc } = slotToUtcRange(booking.date, minSlot);
+    const now = new Date();
+    const hoursUntilStart = (startUtc.getTime() - now.getTime()) / (3600 * 1000);
+    if (hoursUntilStart < 2) {
+      throw new BadRequestException('Chỉ có thể đổi lịch trước giờ bắt đầu trận đấu ít nhất 2 giờ');
+    }
+
+    const targetCode = dto.newResourceCode || booking.resourceCode;
+    const resource = await this.resourceService.findByCode(targetCode);
+    const baseUnitIds = await this.resourceService.resolveBaseUnits(resource.code);
+
+    const sortedSlots = [...dto.newSlotIndices].sort((a, b) => a - b);
+    sortedSlots.forEach((slot) => assertValidSlotIndex(slot));
+
+    // Tính toán giá mới
+    const quote = await this.pricingService.calculatePrice({
+      resourceCode: resource.code,
+      date: dto.newDate,
+      slotIndices: sortedSlots,
+    });
+
+    // Khóa Redis cho slot mới
+    const redisKeys = baseUnitIds.flatMap((unitId) =>
+      sortedSlots.map((slotIndex) => `lock:slot:${unitId}:${dto.newDate}:${slotIndex}`),
+    );
+    const token = crypto.randomUUID();
+    const locked = await this.redisLockService.acquireSlotLocks(redisKeys, token, 60);
+    if (!locked) {
+      throw new ConflictException('Khung giờ mới vừa có người chọn hoặc đã được giữ chỗ');
+    }
+
+    try {
+      return await this.transactionService.runTransaction(async (session: ClientSession) => {
+        // Kiểm tra xung đột slot trong DB
+        const existingConflict = await this.bookingSlotModel.findOne(
+          {
+            unitId: { $in: baseUnitIds },
+            date: dto.newDate,
+            slotIndex: { $in: sortedSlots },
+            bookingId: { $ne: booking._id },
+          },
+          null,
+          { session },
+        );
+
+        if (existingConflict) {
+          throw new ConflictException('Khung giờ mới đã có người đặt trong hệ thống');
+        }
+
+        // Xóa các slots cũ của booking này
+        await this.bookingSlotModel.deleteMany({ bookingId: booking._id }, { session });
+
+        // Tạo các slot mới đã xác nhận (CONFIRMED)
+        const newSlots = baseUnitIds.flatMap((unitId) =>
+          sortedSlots.map((slotIndex) => ({
+            unitId,
+            date: dto.newDate,
+            slotIndex,
+            bookingId: booking._id,
+            status: 'CONFIRMED' as const,
+          })),
+        );
+        await this.bookingSlotModel.insertMany(newSlots, { session });
+
+        // Xử lý chênh lệch giá (A03: khung mới đắt hơn thì thu thêm, rẻ hơn thì hoàn vào ví)
+        const priceDiff = quote.totalPrice - booking.totalPrice;
+        let refundAmount = 0;
+        if (priceDiff < 0) {
+          refundAmount = Math.abs(priceDiff);
+          await this.outboxService.recordEvent(
+            {
+              eventType: 'wallet.refund_requested',
+              aggregateType: 'booking',
+              aggregateId: booking.id,
+              payload: {
+                userId: booking.userId.toString(),
+                refundAmount,
+                reason: 'BOOKING_RESCHEDULE_DIFFERENCE',
+              },
+            },
+            session,
+          );
+        }
+
+        // Cập nhật booking
+        const oldDate = booking.date;
+        const oldSlots = booking.slotIndices;
+        booking.date = dto.newDate;
+        booking.slotIndices = sortedSlots;
+        booking.resourceCode = targetCode;
+        booking.baseUnitIds = baseUnitIds;
+        booking.totalPrice = quote.totalPrice;
+        booking.priceSnapshot = quote as any;
+        booking.rescheduledCount = (booking.rescheduledCount || 0) + 1;
+        booking.version += 1;
+
+        const updated = await booking.save({ session });
+
+        await this.outboxService.recordEvent(
+          {
+            eventType: 'booking.rescheduled',
+            aggregateType: 'booking',
+            aggregateId: booking.id,
+            payload: {
+              bookingCode: booking.bookingCode,
+              oldDate,
+              oldSlots,
+              newDate: dto.newDate,
+              newSlots: sortedSlots,
+              priceDiff,
+            },
+          },
+          session,
+        );
+
+        await this.auditLogService.record(
+          {
+            actorId,
+            action: 'BOOKING_RESCHEDULE',
+            targetType: 'booking',
+            targetId: booking.id,
+            after: updated.toObject() as unknown as Record<string, unknown>,
+          },
+          session,
+        );
+
+        return updated;
+      });
+    } finally {
+      await this.redisLockService.releaseSlotLocks(redisKeys, token);
+    }
   }
 
   async findMyBookings(userId: string, filter?: { status?: string; page?: number; limit?: number }) {
@@ -526,7 +750,14 @@ export class BookingService {
     return { items, total, page, limit };
   }
 
-  async findAllBookings(filter?: { date?: string; resourceCode?: string; status?: string; page?: number; limit?: number }) {
+  async findAllBookings(filter?: {
+    date?: string;
+    resourceCode?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
     const page = filter?.page || 1;
     const limit = Math.min(filter?.limit || 20, 100);
     const skip = (page - 1) * limit;
@@ -536,8 +767,38 @@ export class BookingService {
     if (filter?.resourceCode) query.resourceCode = filter.resourceCode.toUpperCase();
     if (filter?.status) query.status = filter.status;
 
+    if (filter?.search) {
+      const searchStr = filter.search.trim();
+      const matchingUsers = await this.userModel
+        .find(
+          {
+            $or: [
+              { phone: { $regex: searchStr, $options: 'i' } },
+              { fullName: { $regex: searchStr, $options: 'i' } },
+            ],
+          },
+          '_id',
+        )
+        .exec();
+
+      const orConditions: any[] = [
+        { bookingCode: { $regex: searchStr, $options: 'i' } },
+      ];
+
+      if (matchingUsers.length > 0) {
+        orConditions.push({ userId: { $in: matchingUsers.map((u) => u._id) } });
+      }
+      query.$or = orConditions;
+    }
+
     const [items, total] = await Promise.all([
-      this.bookingModel.find(query).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.bookingModel
+        .find(query)
+        .populate('userId', 'fullName phone email avatar')
+        .sort({ date: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
       this.bookingModel.countDocuments(query).exec(),
     ]);
 
