@@ -91,13 +91,23 @@ export default function MyBookingsPage() {
     }
   };
 
-  const filteredBookings = bookings.filter((b) => {
-    if (filterStatus === 'ALL') return true;
-    if (filterStatus === 'UPCOMING') return b.status === 'CONFIRMED' || b.status === 'HELD';
-    if (filterStatus === 'COMPLETED') return b.status === 'COMPLETED' || b.status === 'CHECKED_IN';
-    if (filterStatus === 'CANCELLED') return b.status === 'CANCELLED';
-    return true;
-  });
+  const filteredBookings = bookings
+    .map((b) => ({
+      ...b,
+      id: b.id || (b as any)._id,
+      totalAmount: b.totalAmount !== undefined ? b.totalAmount : (b as any).totalPrice || 0,
+      sportType: b.sportType || (b as any).sport || 'SPORTS',
+      status: ((b.status as any) === 'HOLD' ? 'HELD' : b.status) as BookingItem['status'],
+      resourceName: b.resourceName || ((b as any).resourceCode ? `Sân ${(b as any).resourceCode}` : undefined),
+      slotIndices: Array.isArray(b.slotIndices) ? b.slotIndices : [],
+    }))
+    .filter((b) => {
+      if (filterStatus === 'ALL') return true;
+      if (filterStatus === 'UPCOMING') return b.status === 'CONFIRMED' || b.status === 'HELD';
+      if (filterStatus === 'COMPLETED') return b.status === 'COMPLETED' || b.status === 'CHECKED_IN';
+      if (filterStatus === 'CANCELLED') return b.status === 'CANCELLED';
+      return true;
+    });
 
   const getStatusBadge = (status: BookingItem['status']) => {
     switch (status) {

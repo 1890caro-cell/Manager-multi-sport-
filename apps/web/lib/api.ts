@@ -166,7 +166,10 @@ export const api = {
     },
     getMyBookings: async () => {
       const res = await request<any>('/api/v1/bookings/me');
-      return Array.isArray(res) ? res : res?.data || [];
+      if (Array.isArray(res)) return res;
+      if (Array.isArray(res?.data)) return res.data;
+      if (Array.isArray(res?.data?.items)) return res.data.items;
+      return [];
     },
     getBookingDetail: async (id: string) => {
       const res = await request<any>(`/api/v1/bookings/${id}`);
