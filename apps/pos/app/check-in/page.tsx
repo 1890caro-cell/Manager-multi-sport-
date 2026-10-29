@@ -62,7 +62,7 @@ export default function CheckInPage() {
   const [selectedBooking, setSelectedBooking] = useState<BookingItem | null>(null);
   const [todayBookings, setTodayBookings] = useState<BookingItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'CHECKED_IN' | 'COMPLETED'>('ALL');
-  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(true);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
