@@ -148,6 +148,7 @@ export default function MyBookingsPage() {
       status: ((b.status as any) === 'HOLD' ? 'HELD' : b.status) as BookingItem['status'],
       resourceName: b.resourceName || ((b as any).resourceCode ? `Sân ${(b as any).resourceCode}` : undefined),
       slotIndices: Array.isArray(b.slotIndices) ? b.slotIndices : [],
+      holdExpiresAt: b.holdExpiresAt || (b as any).holdExpiresAt,
     }))
     .filter((b) => {
       if (filterStatus === 'ALL') return true;
@@ -157,14 +158,23 @@ export default function MyBookingsPage() {
       return true;
     });
 
-  const getStatusBadge = (status: BookingItem['status']) => {
+  const getStatusBadge = (status: BookingItem['status'], holdExpiresAt?: string) => {
     switch (status) {
-      case 'HELD':
+      case 'HELD': {
+        const isExpired = holdExpiresAt && new Date(holdExpiresAt).getTime() < Date.now();
+        if (isExpired) {
+          return (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-300">
+              <AlertCircle className="w-3 h-3" /> Hết hạn giữ chỗ
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
             <Hourglass className="w-3 h-3 animate-spin" /> Giữ chỗ (10 phút)
           </span>
         );
+      }
       case 'CONFIRMED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -308,7 +318,7 @@ export default function MyBookingsPage() {
                         {booking.resourceName || `Sân thể thao ${booking.sportType}`}
                       </h3>
                     </div>
-                    {getStatusBadge(booking.status)}
+                    {getStatusBadge(booking.status, booking.holdExpiresAt)}
                   </div>
 
                   <div className="space-y-2 py-3 border-y border-slate-100 text-xs text-slate-600">
@@ -364,20 +374,38 @@ export default function MyBookingsPage() {
                       )}
                     </div>
                   ) : booking.status === 'HELD' ? (
-                    <div className="w-full flex gap-2">
-                      <Link
-                        href={`/booking?resume=${booking.id}`}
-                        className="flex-1 text-center py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors"
-                      >
-                        Thanh toán ngay
-                      </Link>
-                      <button
-                        onClick={() => setCancelModalItem(booking)}
-                        className="px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors"
-                      >
-                        Hủy
-                      </button>
-                    </div>
+                    (() => {
+                      const isExpired = booking.holdExpiresAt && new Date(booking.holdExpiresAt).getTime() < Date.now();
+                      if (isExpired) {
+                        return (
+                          <div className="w-full flex items-center justify-between gap-2">
+                            <span className="text-xs text-rose-500 italic font-medium">Hết hạn giữ chỗ</span>
+                            <button
+                              onClick={() => setCancelModalItem(booking)}
+                              className="px-3 py-1.5 text-xs font-semibold text-slate-500 hover:text-rose-600 border border-slate-200 rounded-lg transition-colors"
+                            >
+                              Hủy vé
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="w-full flex gap-2">
+                          <Link
+                            href={`/booking?resume=${booking.id}`}
+                            className="flex-1 text-center py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                          >
+                            Thanh toán ngay
+                          </Link>
+                          <button
+                            onClick={() => setCancelModalItem(booking)}
+                            className="px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors"
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      );
+                    })()
                   ) : null}
 
                   {booking.status === 'CONFIRMED' && (

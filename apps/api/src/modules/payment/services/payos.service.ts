@@ -115,4 +115,25 @@ export class PayOsService {
     }
     return await this.payos.webhooks.confirm(webhookUrl);
   }
+
+  /**
+   * Tra cứu thông tin trạng thái thanh toán từ PayOS
+   */
+  async getPaymentLinkInformation(orderCode: number | string): Promise<any> {
+    if (!this.payos) {
+      throw new Error('PayOS is not configured.');
+    }
+    return await this.payos.paymentRequests.get(Number(orderCode));
+  }
+
+  /**
+   * Hủy link thanh toán PayOS
+   */
+  async cancelPaymentLink(orderCode: number | string, cancellationReason?: string): Promise<any> {
+    if (!this.payos) {
+      throw new Error('PayOS is not configured.');
+    }
+    return await this.payos.paymentRequests.cancel(Number(orderCode), cancellationReason);
+  }
 }
+

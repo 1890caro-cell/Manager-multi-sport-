@@ -99,11 +99,12 @@ export class PaymentService {
     let qrCodeText: string | undefined;
     let qrDataUrl: string | undefined;
     let checkoutUrl: string | undefined;
+    let meta: Record<string, unknown> = (dto as any).meta || {};
 
     if (dto.method === PaymentMethod.VIETQR) {
       if (this.payOsService.isAvailable()) {
         try {
-          const numericOrderCode = Number(String(Date.now()).slice(-6));
+          const numericOrderCode = Number(`${Math.floor(Date.now() / 1000).toString().slice(-6)}${Math.floor(Math.random() * 900 + 100)}`);
           const payOsRes = await this.payOsService.createPaymentLink({
             orderCode: numericOrderCode,
             amount: dto.amount,
@@ -112,6 +113,7 @@ export class PaymentService {
           qrCodeText = payOsRes.qrCode;
           qrDataUrl = payOsRes.qrDataUrl;
           checkoutUrl = payOsRes.checkoutUrl;
+          meta = { ...meta, ...payOsRes, orderCode: numericOrderCode };
         } catch (err: any) {
           this.logger.warn(`PayOS createPaymentLink failed, fallback to VietQr: ${err.message}`);
           const qrData = this.vietQrService.generateVietQr(paymentCode, dto.amount);
@@ -144,6 +146,7 @@ export class PaymentService {
       checkoutUrl,
       expiresAt,
       idempotencyKey: dto.idempotencyKey,
+      meta,
     });
 
     const saved = await payment.save();
@@ -308,7 +311,7 @@ export class PaymentService {
   ): Promise<PaymentDocument> {
     assertValidMoney(receivedAmount, 'receivedAmount');
 
-    return this.transactionService.runTransaction(async (session: ClientSession) => {
+    const result = await this.transactionService.runTransaction(async (session: ClientSession) => {
       const payment = await this.paymentModel
         .findOne({ paymentCode })
         .session(session)
@@ -409,22 +412,6 @@ export class PaymentService {
 
       await payment.save({ session });
 
-      // Nếu là thanh toán tiền cọc đặt sân -> Kích hoạt xác nhận booking
-      if (payment.orderType === PaymentOrderType.BOOKING) {
-        try {
-          await this.bookingService.confirmBooking(
-            payment.orderId.toString(),
-            {
-              paymentMethod: payment.method,
-              paidAmount: receivedAmount,
-            },
-            payment.userId.toString(),
-          );
-        } catch (err: any) {
-          this.logger.error(`Failed to auto-confirm booking ${payment.orderId}: ${err.message}`);
-        }
-      }
-
       await this.outboxService.recordEvent(
         {
           eventType: 'payment.succeeded',
@@ -455,6 +442,24 @@ export class PaymentService {
 
       return payment;
     });
+
+    // Nếu là thanh toán tiền cọc đặt sân -> Kích hoạt xác nhận booking (thực hiện sau khi payment đã commit thành công)
+    if (result.orderType === PaymentOrderType.BOOKING) {
+      try {
+        await this.bookingService.confirmBooking(
+          result.orderId.toString(),
+          {
+            paymentMethod: result.method,
+            paidAmount: receivedAmount,
+          },
+          result.userId.toString(),
+        );
+      } catch (err: any) {
+        this.logger.error(`Failed to auto-confirm booking ${result.orderId}: ${err.message}`);
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -522,6 +527,80 @@ export class PaymentService {
       throw new NotFoundException('Không tìm thấy giao dịch thanh toán');
     }
     return payment;
+  }
+
+  /**
+   * Tra cứu và xác thực trạng thái thanh toán từ PayOS
+   */
+  async verifyPayOsPayment(paymentId: string): Promise<PaymentDocument> {
+    const payment = await this.paymentModel.findById(paymentId).exec();
+    if (!payment) {
+      throw new NotFoundException(`Không tìm thấy giao dịch thanh toán ${paymentId}`);
+    }
+
+    if (payment.status === PaymentStatus.SUCCESS) {
+      return payment;
+    }
+
+    const orderCode = payment.meta?.orderCode;
+    if (orderCode && this.payOsService.isAvailable()) {
+      try {
+        const payOsRes = await this.payOsService.getPaymentLinkInformation(orderCode as number);
+        if (
+          payOsRes &&
+          (payOsRes.status === 'PAID' ||
+            (payOsRes.amountPaid && payOsRes.amountPaid >= payment.amount))
+        ) {
+          const providerTxnId = payOsRes.transactions?.[0]?.reference || String(orderCode);
+          return await this.handlePaymentSuccess(
+            payment.paymentCode,
+            payOsRes.amountPaid || payment.amount,
+            providerTxnId,
+            payOsRes,
+          );
+        }
+      } catch (err: any) {
+        this.logger.warn(`verifyPayOsPayment check failed for ${payment.paymentCode}: ${err.message}`);
+      }
+    }
+
+    return payment;
+  }
+
+  /**
+   * Lấy giao dịch thanh toán theo orderId
+   */
+  async getPaymentByOrderId(
+    orderId: string,
+    orderType: string = PaymentOrderType.BOOKING,
+  ): Promise<PaymentDocument | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    return await this.paymentModel
+      .findOne({ orderId: new Types.ObjectId(orderId), orderType })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  /**
+   * Mô phỏng thanh toán thành công (hỗ trợ kiểm thử môi trường dev)
+   */
+  async simulatePaymentSuccess(paymentId: string): Promise<PaymentDocument> {
+    const payment = await this.paymentModel.findById(paymentId).exec();
+    if (!payment) {
+      throw new NotFoundException(`Không tìm thấy giao dịch thanh toán ${paymentId}`);
+    }
+
+    if (payment.status === PaymentStatus.SUCCESS) {
+      return payment;
+    }
+
+    const mockTxnId = `SIM_PAYOS_${Date.now()}`;
+    return await this.handlePaymentSuccess(
+      payment.paymentCode,
+      payment.amount,
+      mockTxnId,
+      { simulated: true, simulatedAt: new Date().toISOString() },
+    );
   }
 
   /**

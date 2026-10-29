@@ -34,6 +34,25 @@ export class PaymentsController {
     return { data: payment };
   }
 
+  @Get('by-order/:orderId')
+  async getPaymentByOrder(@Param('orderId') orderId: string) {
+    const payment = await this.paymentService.getPaymentByOrderId(orderId);
+    return { data: payment };
+  }
+
+  @Get(':id/verify-payos')
+  async verifyPayOs(@Param('id') id: string) {
+    const payment = await this.paymentService.verifyPayOsPayment(id);
+    return { data: payment };
+  }
+
+  @Post(':id/simulate-success')
+  @HttpCode(HttpStatus.OK)
+  async simulateSuccess(@Param('id') id: string) {
+    const payment = await this.paymentService.simulatePaymentSuccess(id);
+    return { data: payment };
+  }
+
   @Get(':id')
   async getPayment(@Param('id') id: string) {
     const payment = await this.paymentService.getPayment(id);

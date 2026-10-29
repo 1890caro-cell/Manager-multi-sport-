@@ -3,6 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Inject,
+  forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, ClientSession } from 'mongoose';
@@ -16,6 +19,7 @@ import { SettingsService } from '../../facility/services/settings.service.js';
 import { DatabaseTransactionService } from '../../../database/database-transaction.service.js';
 import { OutboxService } from '../../outbox/services/outbox.service.js';
 import { AuditLogService } from '../../auth/services/audit-log.service.js';
+import { PaymentService } from '../../payment/services/payment.service.js';
 import { User, UserDocument } from '../../auth/schemas/user.schema.js';
 import {
   HoldBookingDto,
@@ -25,6 +29,9 @@ import {
   RecurringBookingDto,
   RecurringBookingResponse,
   BookingStatus,
+  PaymentMethod,
+  PaymentStatus,
+  PaymentOrderType,
 } from '@sports/contracts';
 import {
   parseVietnamDate,
@@ -36,6 +43,8 @@ import {
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
+
   constructor(
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
     @InjectModel(BookingSlot.name) private readonly bookingSlotModel: Model<BookingSlotDocument>,
@@ -47,6 +56,8 @@ export class BookingService {
     private readonly transactionService: DatabaseTransactionService,
     private readonly outboxService: OutboxService,
     private readonly auditLogService: AuditLogService,
+    @Inject(forwardRef(() => PaymentService))
+    private readonly paymentService: PaymentService,
   ) {}
 
   /**
@@ -113,9 +124,10 @@ export class BookingService {
       throw new ConflictException('Khung giờ này vừa có người giữ chỗ hoặc đã được đặt');
     }
 
+    let createdBooking: BookingDocument;
     try {
       // --- LỚP 2: MongoDB Session Transaction ---
-      return await this.transactionService.runTransaction(async (session: ClientSession) => {
+      createdBooking = await this.transactionService.runTransaction(async (session: ClientSession) => {
         const now = new Date();
 
         // 2a. Dọn các ô HELD đã quá hạn để tránh duplicate key ảo
@@ -213,6 +225,24 @@ export class BookingService {
       await this.redisLockService.releaseSlotLocks(redisKeys, token);
       throw err;
     }
+
+    // Tự động tạo bản ghi Payment liên kết với booking và sinh PayOS QR link
+    let payment: any = null;
+    try {
+      payment = await this.paymentService.createPayment(userId, {
+        orderId: createdBooking.id,
+        orderType: PaymentOrderType.BOOKING,
+        amount: quote.totalPrice,
+        method: PaymentMethod.VIETQR,
+        idempotencyKey: `PAY_${createdBooking.bookingCode}`,
+      });
+    } catch (err: any) {
+      this.logger.warn(`Could not auto-create Payment for booking ${createdBooking.bookingCode}: ${err.message}`);
+    }
+
+    const result = createdBooking.toObject ? createdBooking.toObject() : createdBooking;
+    (result as any).payment = payment;
+    return result as any;
   }
 
   /**
@@ -234,6 +264,15 @@ export class BookingService {
     }
 
     const paid = dto.paidAmount !== undefined ? dto.paidAmount : booking.depositAmount;
+
+    // Kiểm tra an toàn thanh toán:
+    // Nếu thanh toán bằng VIETQR, bắt buộc giao dịch Payment phải ở trạng thái SUCCESS
+    if (dto.paymentMethod === PaymentMethod.VIETQR) {
+      const payment = await this.paymentService.getPaymentByOrderId(booking._id.toString(), PaymentOrderType.BOOKING);
+      if (!payment || payment.status !== PaymentStatus.SUCCESS) {
+        throw new BadRequestException('Chưa nhận được xác nhận thanh toán hợp lệ từ PayOS/VietQR');
+      }
+    }
 
     return this.transactionService.runTransaction(async (session: ClientSession) => {
       // Cập nhật trạng thái các slots: HELD -> CONFIRMED, gỡ bỏ holdExpiresAt
@@ -312,6 +351,19 @@ export class BookingService {
         refundAmount = booking.paidAmount;
       } else {
         refundAmount = 0; // Hủy muộn -> không hoàn cọc
+      }
+    }
+
+    // Giải phóng Redis lock keys nếu đang ở trạng thái HOLD
+    if (booking.status === BookingStatus.HOLD) {
+      try {
+        const baseUnitIds = booking.baseUnitIds || (await this.resourceService.resolveBaseUnits(booking.resourceCode));
+        const redisKeys = baseUnitIds.flatMap((unitId) =>
+          booking.slotIndices.map((slotIndex) => `lock:slot:${unitId}:${booking.date}:${slotIndex}`),
+        );
+        await this.redisLockService.releaseSlotLocks(redisKeys, booking._id.toString());
+      } catch (err: any) {
+        this.logger.warn(`Error releasing Redis locks on cancel: ${err.message}`);
       }
     }
 

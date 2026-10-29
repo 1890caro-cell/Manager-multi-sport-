@@ -6,6 +6,7 @@ import {
   Calendar as CalendarIcon,
   Clock,
   CheckCircle,
+  CheckCircle2,
   AlertCircle,
   QrCode,
   Wallet,
@@ -15,6 +16,9 @@ import {
   ChevronRight,
   Info,
   Loader2,
+  ArrowRight,
+  Zap,
+  RefreshCw,
 } from 'lucide-react';
 import { api, getStoredToken } from '@/lib/api';
 import { formatVND, formatDateOnly, generateIdempotencyKey } from '@/lib/utils';
@@ -52,9 +56,44 @@ function BookingContent() {
 
   // Payment state
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.VIETQR);
+  const [paymentData, setPaymentData] = useState<any | null>(null);
+  const [isPaid, setIsPaid] = useState<boolean>(false);
   const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Resume booking from /my-bookings?resume=<id>
+  const resumeId = searchParams.get('resume');
+  useEffect(() => {
+    if (!resumeId) return;
+    if (!getStoredToken()) {
+      router.push('/login');
+      return;
+    }
+    api.booking.getById(resumeId)
+      .then(async (booking: any) => {
+        if (!booking) return;
+        const b = booking?.data ?? booking;
+        if (b.status === 'HOLD' || b.status === 'HELD') {
+          const expTime = new Date(b.holdExpiresAt).getTime();
+          const rem = Math.max(0, Math.floor((expTime - Date.now()) / 1000));
+          if (rem > 0) {
+            setReservedBooking(b);
+            setHoldSecondsRemaining(rem);
+            setSelectedDate(b.date);
+            if (b.slotIndices) setSelectedSlots(b.slotIndices);
+            // Fetch associated payment
+            try {
+              const p = await api.payments.getByOrderId(b.id || b._id);
+              if (p) setPaymentData(p);
+            } catch {}
+          } else {
+            setErrorMessage('Lượt giữ chỗ này đã hết hạn 10 phút. Vui lòng chọn khung giờ mới.');
+          }
+        }
+      })
+      .catch((err) => setErrorMessage(err.message));
+  }, [resumeId]);
 
   // Load resources
   useEffect(() => {
@@ -74,12 +113,13 @@ function BookingContent() {
 
   // Hold countdown timer
   useEffect(() => {
-    if (!reservedBooking) return;
+    if (!reservedBooking || isPaid) return;
     const interval = setInterval(() => {
       setHoldSecondsRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
           setReservedBooking(null);
+          setPaymentData(null);
           setErrorMessage('Thời gian giữ chỗ 10 phút đã hết hạn. Vui lòng chọn lại.');
           return 0;
         }
@@ -87,7 +127,41 @@ function BookingContent() {
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [reservedBooking]);
+  }, [reservedBooking, isPaid]);
+
+  // Real-time PayOS Polling verification
+  useEffect(() => {
+    if (!reservedBooking || isPaid) return;
+    if (paymentMethod !== PaymentMethod.VIETQR) return;
+
+    const paymentId = paymentData?.id || paymentData?._id;
+    if (!paymentId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const checked = await api.payments.verifyPayOs(paymentId);
+        if (checked && (checked.status === 'SUCCESS' || checked.status === 'PAID')) {
+          setIsPaid(true);
+          setPaymentSuccess(true);
+          clearInterval(interval);
+        }
+      } catch {
+        // Polling retry
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [reservedBooking, paymentData, isPaid, paymentMethod]);
+
+  // Auto redirect on payment success
+  useEffect(() => {
+    if (isPaid) {
+      const timer = setTimeout(() => {
+        router.push('/my-bookings');
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [isPaid, router]);
 
   const activeResource = useMemo(() => {
     return resources.find((r) => r._id === selectedResourceId);
@@ -151,6 +225,14 @@ function BookingContent() {
       });
 
       setReservedBooking(booking);
+      if (booking.payment) {
+        setPaymentData(booking.payment);
+      } else {
+        const p = await api.payments.getByOrderId(booking.id || booking._id);
+        setPaymentData(p);
+      }
+      setIsPaid(false);
+      setPaymentSuccess(false);
       setHoldSecondsRemaining(600); // 10 minutes
     } catch (err: any) {
       setErrorMessage(err.message || 'Khung giờ này vừa có người giữ chỗ hoặc đã được đặt');
@@ -159,26 +241,44 @@ function BookingContent() {
     }
   };
 
-  const handleConfirmPayment = async () => {
-    if (!reservedBooking) return;
+  const handleCancelHold = async () => {
+    if (reservedBooking) {
+      try {
+        await api.booking.cancel(reservedBooking.id || reservedBooking._id, 'Người dùng hủy giữ chỗ');
+      } catch {}
+    }
+    setReservedBooking(null);
+    setPaymentData(null);
+    setIsPaid(false);
+    setSelectedSlots([]);
+  };
+
+  const handlePayWithWallet = async () => {
+    if (!paymentData) return;
     setIsConfirmingPayment(true);
     setErrorMessage(null);
-
     try {
-      const idempotencyKey = generateIdempotencyKey('CONFIRM');
-      await api.booking.confirm(reservedBooking.id || reservedBooking._id, {
-        paymentMethod,
-        idempotencyKey,
-      });
-
+      const pId = paymentData.id || paymentData._id;
+      const key = generateIdempotencyKey('WALLET_PAY');
+      await api.payments.payWithWallet(pId, key);
+      setIsPaid(true);
       setPaymentSuccess(true);
-      setTimeout(() => {
-        router.push('/my-bookings');
-      }, 2000);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Thanh toán xác nhận đặt chỗ thất bại');
+      setErrorMessage(err.message || 'Thanh toán bằng ví nội bộ thất bại');
     } finally {
       setIsConfirmingPayment(false);
+    }
+  };
+
+  const handleSimulatePayment = async () => {
+    if (!paymentData) return;
+    try {
+      const pId = paymentData.id || paymentData._id;
+      await api.payments.simulateSuccess(pId);
+      setIsPaid(true);
+      setPaymentSuccess(true);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Mô phỏng thanh toán thất bại');
     }
   };
 
@@ -415,109 +515,199 @@ function BookingContent() {
               </div>
             </div>
 
-            {/* Payment Method Selector */}
-            <div className="space-y-3">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Chọn phương thức thanh toán
-              </label>
-
-              <div className="grid grid-cols-3 gap-2">
+            {isPaid ? (
+              <div className="p-6 rounded-2xl bg-emerald-50 border-2 border-emerald-500 text-center space-y-4 animate-in fade-in zoom-in duration-300">
+                <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
+                  <CheckCircle2 className="w-10 h-10 animate-bounce" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-black text-slate-900">Thanh toán PayOS thành công!</h4>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Hệ thống đã nhận được tiền và xác nhận đặt sân <strong>{reservedBooking?.bookingCode}</strong>.
+                  </p>
+                  <p className="text-[11px] text-emerald-700 font-semibold mt-2">
+                    Đang tự động chuyển hướng đến trang Vé của tôi...
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod(PaymentMethod.VIETQR)}
-                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
-                    paymentMethod === PaymentMethod.VIETQR
-                      ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
+                  onClick={() => router.push('/my-bookings')}
+                  className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
                 >
-                  <QrCode className="w-5 h-5 text-emerald-600" />
-                  <span>VietQR</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod(PaymentMethod.INTERNAL_WALLET)}
-                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
-                    paymentMethod === PaymentMethod.INTERNAL_WALLET
-                      ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Wallet className="w-5 h-5 text-blue-600" />
-                  <span>Ví nội bộ</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod(PaymentMethod.CASH)}
-                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
-                    paymentMethod === PaymentMethod.CASH
-                      ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Banknote className="w-5 h-5 text-amber-600" />
-                  <span>Tại quầy</span>
+                  <span>Vào xem vé của tôi ngay</span>
+                  <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
-            </div>
+            ) : (
+              <>
+                {/* Payment Method Selector */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Chọn phương thức thanh toán
+                  </label>
 
-            {/* VietQR PayOS Display */}
-            {paymentMethod === PaymentMethod.VIETQR && (
-              <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row items-center gap-4">
-                <div className="w-36 h-36 bg-white rounded-xl border border-emerald-300 p-1.5 shrink-0 flex items-center justify-center shadow-md">
-                  <img
-                    src={`https://img.vietqr.io/image/970422-VQRQANCXY2688-compact2.png?amount=${reservedBooking?.totalPrice || reservedBooking?.estimatedPrice || estimatedPrice || 0}&addInfo=DATSAN%20${reservedBooking?.bookingCode || 'SAN'}&accountName=CAO%20NGUYEN%20ANH`}
-                    alt="VietQR PayOS"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <div className="text-xs space-y-1.5 w-full">
-                  <div className="flex items-center gap-2">
-                    <span className="font-black text-slate-900 text-sm">VietQR Chuyển khoản (PayOS)</span>
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">Auto Webhook</span>
-                  </div>
-                  <div className="text-slate-600">Ngân hàng: <strong className="text-slate-900">MBBank (Quân Đội)</strong></div>
-                  <div className="text-slate-600">Số tài khoản: <strong className="text-emerald-700 font-mono text-sm">VQRQANCXY2688</strong></div>
-                  <div className="text-slate-600">Chủ tài khoản: <strong className="text-slate-900">CAO NGUYEN ANH</strong></div>
-                  <div className="text-slate-600">Số tiền: <strong className="text-emerald-600 font-bold">{formatVND(reservedBooking?.totalPrice || reservedBooking?.estimatedPrice || estimatedPrice || 0)}</strong></div>
-                  <div className="text-[11px] bg-white/80 p-1.5 rounded-lg border border-emerald-100 text-emerald-800 font-bold">
-                    Cú pháp: DATSAN {reservedBooking?.bookingCode || 'SAN'}
-                  </div>
-                </div>
-              </div>
-            )}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod(PaymentMethod.VIETQR)}
+                      className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                        paymentMethod === PaymentMethod.VIETQR
+                          ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <QrCode className="w-5 h-5 text-emerald-600" />
+                      <span>VietQR</span>
+                    </button>
 
-            {/* Actions */}
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setReservedBooking(null)}
-                className="w-1/3 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-bold text-xs"
-              >
-                Hủy giữ chỗ
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmPayment}
-                disabled={isConfirmingPayment || paymentSuccess}
-                className="w-2/3 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isConfirmingPayment ? (
-                  <span>Đang xử lý...</span>
-                ) : paymentSuccess ? (
-                  <>
-                    <CheckCircle className="w-4 h-4 text-slate-950" />
-                    <span>Đã xác nhận thành công!</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Xác nhận & Hoàn tất</span>
-                  </>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod(PaymentMethod.INTERNAL_WALLET)}
+                      className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                        paymentMethod === PaymentMethod.INTERNAL_WALLET
+                          ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Wallet className="w-5 h-5 text-blue-600" />
+                      <span>Ví nội bộ</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod(PaymentMethod.CASH)}
+                      className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                        paymentMethod === PaymentMethod.CASH
+                          ? 'border-emerald-500 bg-emerald-50/80 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Banknote className="w-5 h-5 text-amber-600" />
+                      <span>Tại quầy</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* VietQR PayOS Display */}
+                {paymentMethod === PaymentMethod.VIETQR && (
+                  <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row items-center gap-4">
+                    <div className="w-36 h-36 bg-white rounded-xl border border-emerald-300 p-1.5 shrink-0 flex items-center justify-center shadow-md">
+                      <img
+                        src={
+                          paymentData?.qrDataUrl ||
+                          paymentData?.meta?.qrDataUrl ||
+                          `https://img.vietqr.io/image/970422-VQRQANCXY2688-compact2.png?amount=${paymentData?.amount || reservedBooking?.totalPrice || estimatedPrice || 0}&addInfo=PAY%20${paymentData?.paymentCode || reservedBooking?.bookingCode}&accountName=CAO%20NGUYEN%20ANH`
+                        }
+                        alt="VietQR PayOS"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="text-xs space-y-1.5 w-full">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-slate-900 text-sm">VietQR Chuyển khoản (PayOS)</span>
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full animate-pulse flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
+                          Đang chờ chuyển khoản
+                        </span>
+                      </div>
+                      <div className="text-slate-600">Ngân hàng: <strong className="text-slate-900">MBBank (Quân Đội)</strong></div>
+                      <div className="text-slate-600">Số tài khoản: <strong className="text-emerald-700 font-mono text-sm">{paymentData?.meta?.accountNumber || 'VQRQANCXY2688'}</strong></div>
+                      <div className="text-slate-600">Chủ tài khoản: <strong className="text-slate-900">{paymentData?.meta?.accountName || 'CAO NGUYEN ANH'}</strong></div>
+                      <div className="text-slate-600">Số tiền: <strong className="text-emerald-600 font-bold">{formatVND(paymentData?.amount || reservedBooking?.totalPrice || estimatedPrice || 0)}</strong></div>
+                      <div className="text-[11px] bg-white/80 p-1.5 rounded-lg border border-emerald-100 text-emerald-800 font-bold">
+                        Cú pháp: {paymentData?.meta?.description || `PAY ${paymentData?.paymentCode?.replace(/[^A-Za-z0-9]/g, '').slice(-8) || reservedBooking?.bookingCode}`}
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </button>
-            </div>
+
+                {/* Wallet Balance Display */}
+                {paymentMethod === PaymentMethod.INTERNAL_WALLET && (
+                  <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600">Số tiền cần thanh toán:</span>
+                      <strong className="text-slate-900 text-sm">{formatVND(paymentData?.amount || estimatedPrice)}</strong>
+                    </div>
+                    <p className="text-[11px] text-blue-700">
+                      Hệ thống sẽ trừ trực tiếp số dư trong ví nội bộ của bạn để xác nhận đặt sân ngay lập tức.
+                    </p>
+                  </div>
+                )}
+
+                {/* Cash at Counter Display */}
+                {paymentMethod === PaymentMethod.CASH && (
+                  <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 text-xs space-y-2">
+                    <p className="text-slate-700 leading-relaxed">
+                      Bạn có thể thanh toán trực tiếp tại quầy thu ngân khi đến nhận sân (SPEC F04.5).
+                      Vui lòng đến trước giờ thi đấu 15 phút để hoàn tất thủ tục.
+                    </p>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelHold}
+                    className="w-1/3 py-3 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-xs transition-colors"
+                  >
+                    Hủy giữ chỗ
+                  </button>
+
+                  {paymentMethod === PaymentMethod.VIETQR ? (
+                    <button
+                      type="button"
+                      disabled={true}
+                      className="w-2/3 py-3 rounded-xl bg-slate-100 text-slate-400 font-black text-xs cursor-not-allowed flex items-center justify-center gap-2 border border-slate-200 shadow-none"
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                      <span>Đang chờ thanh toán qua PayOS...</span>
+                    </button>
+                  ) : paymentMethod === PaymentMethod.INTERNAL_WALLET ? (
+                    <button
+                      type="button"
+                      onClick={handlePayWithWallet}
+                      disabled={isConfirmingPayment}
+                      className="w-2/3 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isConfirmingPayment ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Đang xử lý trừ ví...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wallet className="w-4 h-4" />
+                          <span>Thanh toán bằng Ví nội bộ</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => router.push('/my-bookings')}
+                      className="w-2/3 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2"
+                    >
+                      <span>Giữ chỗ & Trả tại quầy</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Dev Testing Helper */}
+                {paymentMethod === PaymentMethod.VIETQR && paymentData && (
+                  <div className="text-center pt-1 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={handleSimulatePayment}
+                      className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline inline-flex items-center gap-1.5"
+                    >
+                      <Zap className="w-3 h-3 text-emerald-500" />
+                      <span>[Dev Test] Mô phỏng PayOS đã nhận tiền</span>
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

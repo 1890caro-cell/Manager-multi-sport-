@@ -175,6 +175,10 @@ export const api = {
       const res = await request<any>(`/api/v1/bookings/${id}`);
       return res?.data ?? res;
     },
+    getById: async (id: string) => {
+      const res = await request<any>(`/api/v1/bookings/${id}`);
+      return res?.data ?? res;
+    },
     cancel: async (bookingId: string, reason?: string) => {
       const res = await request<any>(`/api/v1/bookings/${bookingId}/cancel`, {
         method: 'POST',
@@ -186,6 +190,42 @@ export const api = {
       const res = await request<any>(`/api/v1/bookings/${bookingId}/reschedule`, {
         method: 'POST',
         body: JSON.stringify(data),
+      });
+      return res?.data ?? res;
+    },
+  },
+
+  // Thanh toán (M06)
+  payments: {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/payments', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      return res?.data ?? res;
+    },
+    getById: async (id: string) => {
+      const res = await request<any>(`/api/v1/payments/${id}`);
+      return res?.data ?? res;
+    },
+    getByOrderId: async (orderId: string) => {
+      const res = await request<any>(`/api/v1/payments/by-order/${orderId}`);
+      return res?.data ?? res;
+    },
+    verifyPayOs: async (paymentId: string) => {
+      const res = await request<any>(`/api/v1/payments/${paymentId}/verify-payos`);
+      return res?.data ?? res;
+    },
+    payWithWallet: async (paymentId: string, idempotencyKey: string) => {
+      const res = await request<any>(`/api/v1/payments/${paymentId}/wallet-pay`, {
+        method: 'POST',
+        body: JSON.stringify({ idempotencyKey }),
+      });
+      return res?.data ?? res;
+    },
+    simulateSuccess: async (paymentId: string) => {
+      const res = await request<any>(`/api/v1/payments/${paymentId}/simulate-success`, {
+        method: 'POST',
       });
       return res?.data ?? res;
     },
