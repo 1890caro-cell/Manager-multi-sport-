@@ -5,9 +5,11 @@ import { POSHeader } from '@/components/POSHeader';
 import { ReceiptPreview } from '@/components/ReceiptPreview';
 import { formatVND, formatDateTime } from '@/lib/utils';
 import { bridge, ReceiptData } from '@/lib/bridge';
+import { usePOS } from '@/lib/pos-context';
 import { Receipt, Printer, RotateCcw, Search, ShieldAlert, CheckCircle2, X } from 'lucide-react';
 
 export default function OrdersPage() {
+  const { currentUser } = usePOS();
   const [search, setSearch] = useState('');
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptData | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState<any | null>(null);
@@ -69,15 +71,16 @@ export default function OrdersPage() {
   };
 
   const handleConfirmCancel = () => {
-    if (managerPin !== '8888') {
-      alert('Mã PIN Quản lý không đúng! Bắt buộc phải có phê duyệt của Manager để hủy đơn theo SPEC F12.4.');
+    const isAuthorized = currentUser?.role === 'MANAGER' || currentUser?.role === 'ADMIN' || managerPin === '8888';
+    if (!isAuthorized) {
+      alert('Thao tác hủy hóa đơn bị từ chối! Bắt buộc phải có tài khoản Quản lý (Manager) / Admin hoặc nhập đúng mã PIN quản lý theo SPEC F12.4.');
       return;
     }
 
     setOrders((prev) =>
       prev.map((o) => (o.id === cancellingOrder.id ? { ...o, status: 'CANCELLED' } : o)),
     );
-    alert(`Đã hủy đơn hàng [${cancellingOrder.id}] thành công. Số lượng sản phẩm đã được hoàn trả lại thẻ kho.`);
+    alert(`Đã hủy đơn hàng [${cancellingOrder.id}] thành công bởi [${currentUser?.fullName || 'Quản lý'}]. Số lượng sản phẩm đã được hoàn trả lại thẻ kho.`);
     setCancellingOrder(null);
     setManagerPin('');
   };

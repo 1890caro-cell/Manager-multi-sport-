@@ -1,25 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { POSHeader } from '@/components/POSHeader';
-import { ShiftModal } from '@/components/ShiftModal';
 import { formatVND, formatDateTime } from '@/lib/utils';
+import { usePOS } from '@/lib/pos-context';
 import { Clock, DollarSign, Lock, Unlock, CheckCircle2, AlertTriangle, Printer, History } from 'lucide-react';
 
 export default function ShiftsPage() {
-  const [currentShift, setCurrentShift] = useState<any>({
-    id: 'SHIFT-20261026-01',
-    cashierName: 'Nguyễn Văn Thu Ngân',
-    openedAt: '2026-10-26T07:00:00Z',
-    initialFloat: 1000000,
-    cashSales: 3450000,
-    vietQrSales: 1820000,
-    walletSales: 650000,
-    expectedCash: 4450000,
-    totalOrdersCount: 28,
-  });
-
-  const [shiftModalMode, setShiftModalMode] = useState<'OPEN' | 'CLOSE' | null>(null);
+  const { currentShift, openShiftModal } = usePOS();
 
   const pastShifts = [
     {
@@ -50,11 +38,7 @@ export default function ShiftsPage() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-background overflow-hidden select-none">
-      <POSHeader
-        currentShift={currentShift}
-        onOpenShiftModal={() => setShiftModalMode('OPEN')}
-        onCloseShiftModal={() => setShiftModalMode('CLOSE')}
-      />
+      <POSHeader />
 
       <main className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full space-y-6">
         <div className="flex items-center justify-between">
@@ -67,7 +51,7 @@ export default function ShiftsPage() {
 
           {currentShift ? (
             <button
-              onClick={() => setShiftModalMode('CLOSE')}
+              onClick={() => openShiftModal('CLOSE')}
               className="px-5 py-2.5 bg-destructive text-destructive-foreground font-bold text-xs rounded-xl hover:bg-destructive/90 flex items-center gap-2 shadow-sm"
             >
               <Lock className="w-4 h-4" />
@@ -75,7 +59,7 @@ export default function ShiftsPage() {
             </button>
           ) : (
             <button
-              onClick={() => setShiftModalMode('OPEN')}
+              onClick={() => openShiftModal('OPEN')}
               className="px-5 py-2.5 bg-primary text-primary-foreground font-bold text-xs rounded-xl hover:bg-primary/90 flex items-center gap-2 shadow-sm"
             >
               <Unlock className="w-4 h-4" />
@@ -205,32 +189,6 @@ export default function ShiftsPage() {
           </div>
         </div>
       </main>
-
-      {/* Shift Modal */}
-      <ShiftModal
-        visible={shiftModalMode !== null}
-        mode={shiftModalMode || 'OPEN'}
-        onClose={() => setShiftModalMode(null)}
-        cashierName={currentShift?.cashierName}
-        currentShiftData={currentShift}
-        onSuccess={() => {
-          if (shiftModalMode === 'OPEN') {
-            setCurrentShift({
-              id: `SHIFT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-01`,
-              cashierName: 'Nguyễn Văn Thu Ngân',
-              openedAt: new Date().toISOString(),
-              initialFloat: 1000000,
-              cashSales: 0,
-              vietQrSales: 0,
-              walletSales: 0,
-              expectedCash: 1000000,
-              totalOrdersCount: 0,
-            });
-          } else {
-            setCurrentShift(null);
-          }
-        }}
-      />
     </div>
   );
 }

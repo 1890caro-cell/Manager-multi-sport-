@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { POSClientProvider } from '@/components/POSClientProvider';
 
 export const metadata: Metadata = {
   title: 'Antigravity Touch POS | Quầy Canteen & Bán lẻ',
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="vi" className="dark">
       <body className="bg-background text-foreground overflow-hidden select-none">
-        {children}
+        <POSClientProvider>{children}</POSClientProvider>
       </body>
     </html>
   );

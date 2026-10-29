@@ -6,9 +6,9 @@ import { ProductGrid, ProductItem } from '@/components/ProductGrid';
 import { CartPane, CartItem } from '@/components/CartPane';
 import { PaymentModal } from '@/components/PaymentModal';
 import { ReceiptPreview } from '@/components/ReceiptPreview';
-import { ShiftModal } from '@/components/ShiftModal';
 import { ReceiptData } from '@/lib/bridge';
 import { api } from '@/lib/api';
+import { usePOS } from '@/lib/pos-context';
 import { Lock, DollarSign } from 'lucide-react';
 
 const INITIAL_PRODUCTS: ProductItem[] = [
@@ -157,20 +157,7 @@ export default function TouchPOSPage() {
   const [customerWalletBalance, setCustomerWalletBalance] = useState<number>(0);
   const [voucherDiscount, setVoucherDiscount] = useState<number>(0);
 
-  // Shifts state
-  const [currentShift, setCurrentShift] = useState<any | null>({
-    id: 'SHIFT-20261026-01',
-    cashierName: 'Nguyễn Văn Thu Ngân',
-    openedAt: '2026-10-26T07:00:00Z',
-    initialFloat: 1000000,
-    cashSales: 3450000,
-    vietQrSales: 1820000,
-    walletSales: 650000,
-    expectedCash: 4450000,
-    totalOrdersCount: 28,
-  });
-
-  const [shiftModalMode, setShiftModalMode] = useState<'OPEN' | 'CLOSE' | null>(null);
+  const { currentShift, openShiftModal, recordSale } = usePOS();
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
 
@@ -193,7 +180,7 @@ export default function TouchPOSPage() {
   // Cart operations
   const handleAddToCart = (product: ProductItem) => {
     if (!currentShift) {
-      setShiftModalMode('OPEN');
+      openShiftModal('OPEN');
       return;
     }
 
@@ -253,12 +240,7 @@ export default function TouchPOSPage() {
   return (
     <div className="flex flex-col h-screen w-screen bg-background overflow-hidden select-none">
       {/* POS Top Header */}
-      <POSHeader
-        currentShift={currentShift}
-        onOpenShiftModal={() => setShiftModalMode('OPEN')}
-        onCloseShiftModal={() => setShiftModalMode('CLOSE')}
-        bridgeOnline={true}
-      />
+      <POSHeader />
 
       {/* Main Touch Workspace */}
       <main className="flex-1 flex overflow-hidden p-4 gap-4 relative">
@@ -280,7 +262,7 @@ export default function TouchPOSPage() {
             onClearCart={handleClearCart}
             onProceedPayment={() => {
               if (!currentShift) {
-                setShiftModalMode('OPEN');
+                openShiftModal('OPEN');
                 return;
               }
               setShowPaymentModal(true);
@@ -305,7 +287,7 @@ export default function TouchPOSPage() {
               Theo quy định vận hành SPEC F12.5 & Bất biến 00-invariants.md, thu ngân phải thực hiện Mở ca và bàn giao tiền đầu ca trước khi bắt đầu tạo đơn bán hàng.
             </p>
             <button
-              onClick={() => setShiftModalMode('OPEN')}
+              onClick={() => openShiftModal('OPEN')}
               className="mt-6 px-8 py-3.5 bg-primary text-primary-foreground font-bold text-sm rounded-2xl hover:bg-primary/90 flex items-center gap-2 shadow-lg"
             >
               <DollarSign className="w-5 h-5" />
@@ -333,14 +315,7 @@ export default function TouchPOSPage() {
 
           // Update shift sales
           if (currentShift) {
-            setCurrentShift((prev: any) => ({
-              ...prev,
-              cashSales: receipt.paymentMethod === 'CASH' ? prev.cashSales + receipt.totalAmount : prev.cashSales,
-              vietQrSales: receipt.paymentMethod === 'VIETQR' ? prev.vietQrSales + receipt.totalAmount : prev.vietQrSales,
-              walletSales: receipt.paymentMethod === 'WALLET' ? prev.walletSales + receipt.totalAmount : prev.walletSales,
-              expectedCash: receipt.paymentMethod === 'CASH' ? prev.expectedCash + receipt.totalAmount : prev.expectedCash,
-              totalOrdersCount: prev.totalOrdersCount + 1,
-            }));
+            recordSale(receipt.paymentMethod, receipt.totalAmount);
           }
         }}
       />
@@ -349,32 +324,6 @@ export default function TouchPOSPage() {
       <ReceiptPreview
         receipt={lastReceipt}
         onClose={() => setLastReceipt(null)}
-      />
-
-      {/* Shift Modal (Open / Close) */}
-      <ShiftModal
-        visible={shiftModalMode !== null}
-        mode={shiftModalMode || 'OPEN'}
-        onClose={() => setShiftModalMode(null)}
-        cashierName={currentShift?.cashierName}
-        currentShiftData={currentShift}
-        onSuccess={() => {
-          if (shiftModalMode === 'OPEN') {
-            setCurrentShift({
-              id: `SHIFT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-01`,
-              cashierName: 'Nguyễn Văn Thu Ngân',
-              openedAt: new Date().toISOString(),
-              initialFloat: 1000000,
-              cashSales: 0,
-              vietQrSales: 0,
-              walletSales: 0,
-              expectedCash: 1000000,
-              totalOrdersCount: 0,
-            });
-          } else {
-            setCurrentShift(null);
-          }
-        }}
       />
     </div>
   );

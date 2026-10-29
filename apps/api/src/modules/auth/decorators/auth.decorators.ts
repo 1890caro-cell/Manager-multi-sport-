@@ -10,7 +10,19 @@ export const RequireRoles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
 export const PERMISSIONS_KEY = 'PERMISSIONS';
 export const RequirePermissions = (...permissions: string[]) => SetMetadata(PERMISSIONS_KEY, permissions);
 
-export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {
+export const CurrentUser = createParamDecorator((data: unknown, ctx: ExecutionContext) => {
   const request = ctx.switchToHttp().getRequest();
-  return request.user;
+  const user = request.user;
+  if (!user) return null;
+  if (!data) return user;
+  if (data === 'sub' || data === 'id' || data === '_id') {
+    return user.id || user._id?.toString();
+  }
+  if (data === 'name') {
+    return user.fullName || user.name || 'Người dùng';
+  }
+  if (data === 'role') {
+    return user.role;
+  }
+  return (user as any)[data as string] ?? user;
 });

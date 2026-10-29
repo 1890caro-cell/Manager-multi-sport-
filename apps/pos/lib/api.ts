@@ -21,6 +21,7 @@ export class ApiError extends Error {
 }
 
 let posToken: string | null = null;
+let posUser: any | null = null;
 
 export function setPosToken(token: string | null) {
   posToken = token;
@@ -39,6 +40,30 @@ export function getPosToken(): string | null {
     posToken = localStorage.getItem('pos_token');
   }
   return posToken;
+}
+
+export function setPosUser(user: any | null) {
+  posUser = user;
+  if (typeof window !== 'undefined') {
+    if (user) {
+      localStorage.setItem('pos_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('pos_user');
+    }
+  }
+}
+
+export function getPosUser(): any | null {
+  if (posUser) return posUser;
+  if (typeof window !== 'undefined') {
+    const raw = localStorage.getItem('pos_user');
+    if (raw) {
+      try {
+        posUser = JSON.parse(raw);
+      } catch {}
+    }
+  }
+  return posUser;
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -78,18 +103,71 @@ export const api = {
   // Auth
   auth: {
     login: async (phone: string, pin: string) => {
-      const res = await request<{ data: { accessToken: string; user: any } }>('/api/v1/auth/login', {
+      const res = await request<any>('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify({ phone, password: pin }),
       });
-      if (res?.data?.accessToken) {
-        setPosToken(res.data.accessToken);
+      const token = res?.accessToken || res?.tokens?.accessToken || res?.data?.accessToken;
+      const user = res?.user || res?.data?.user;
+      if (token) {
+        setPosToken(token);
       }
-      return res.data;
+      if (user) {
+        setPosUser(user);
+      }
+      return { token, user };
     },
     getProfile: async () => {
       const res = await request<{ data: any }>('/api/v1/auth/profile');
       return res.data;
+    },
+  },
+
+  // Shifts (M12 / F12.5)
+  shifts: {
+    getCurrent: async () => {
+      try {
+        const res = await request<{ data: any }>('/api/v1/canteen/shifts/current');
+        return res.data;
+      } catch {
+        return null;
+      }
+    },
+    getCurrentShift: async () => {
+      const res = await request<{ data: any }>('/api/v1/canteen/shifts/current');
+      return res.data;
+    },
+    open: async (dto: { openingCash: number; notes?: string }) => {
+      const res = await request<{ data: any }>('/api/v1/canteen/shifts/open', {
+        method: 'POST',
+        body: JSON.stringify(dto),
+      });
+      return res.data;
+    },
+    openShift: async (initialFloat: number, cashierId?: string) => {
+      const res = await request<{ data: any }>('/api/v1/canteen/shifts/open', {
+        method: 'POST',
+        body: JSON.stringify({ initialFloat, cashierId }),
+      });
+      return res.data;
+    },
+    close: async (shiftId: string, dto: { actualCash: number; notes?: string }) => {
+      const res = await request<{ data: any }>(`/api/v1/canteen/shifts/${shiftId}/close`, {
+        method: 'POST',
+        body: JSON.stringify(dto),
+      });
+      return res.data;
+    },
+    closeShift: async (shiftId: string, actualCash: number, notes?: string) => {
+      const res = await request<{ data: any }>(`/api/v1/canteen/shifts/${shiftId}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ actualCash, notes }),
+      });
+      return res.data;
+    },
+    getShiftHistory: async () => {
+      const res = await request<{ data: any[] }>('/api/v1/canteen/shifts');
+      return res.data || [];
     },
   },
 
@@ -106,32 +184,6 @@ export const api = {
     getByBarcode: async (barcode: string) => {
       const res = await request<{ data: any }>(`/api/v1/canteen/products/barcode/${barcode}`);
       return res.data;
-    },
-  },
-
-  // Cashier Shifts (F12.5)
-  shifts: {
-    getCurrentShift: async () => {
-      const res = await request<{ data: any }>('/api/v1/canteen/shifts/current');
-      return res.data;
-    },
-    openShift: async (initialFloat: number, cashierId?: string) => {
-      const res = await request<{ data: any }>('/api/v1/canteen/shifts/open', {
-        method: 'POST',
-        body: JSON.stringify({ initialFloat, cashierId }),
-      });
-      return res.data;
-    },
-    closeShift: async (shiftId: string, actualCash: number, notes?: string) => {
-      const res = await request<{ data: any }>(`/api/v1/canteen/shifts/${shiftId}/close`, {
-        method: 'POST',
-        body: JSON.stringify({ actualCash, notes }),
-      });
-      return res.data;
-    },
-    getShiftHistory: async () => {
-      const res = await request<{ data: any[] }>('/api/v1/canteen/shifts');
-      return res.data || [];
     },
   },
 
